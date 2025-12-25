@@ -59,8 +59,8 @@ def generate_audio(tool_context: ToolContext, content: str, tone: str="cheerfull
     directory = os.path.join(OUTPUT_DIR, directory)
     if not os.path.exists(directory):
         os.makedirs(directory)
-    file_path = os.path.join(directory, file_name)
 
+    file_path = os.path.join(directory, file_name)
     _save_wave_file(file_path, data) # Saves the file to the specified directory
 
     return {"status": "success", "file_path": file_path}

@@ -1,6 +1,8 @@
 import os 
 from dotenv import load_dotenv
 from google.adk.agents import Agent, SequentialAgent
+from google.adk.apps.app import App
+from google.adk.agents.context_cache_config import ContextCacheConfig
 
 from .sub_agents.forecast_writer.agent import forecast_writer_agent
 from .sub_agents.forecast_speaker.agent import forecast_speaker_agent
@@ -31,7 +33,7 @@ root_agent = Agent(
       and the type of weather information in the session with the key 'WEATHER_TYPE'
       and set the current time and date in the session with the key 'FORECAST_TIMESTAMP'.
     - Delegate the task of producing the weather forecast to the weather_studio_team.
-    """,
+    """,   
     sub_agents=[weather_studio_team],
     tools=[get_current_timestamp, set_session_value],
     

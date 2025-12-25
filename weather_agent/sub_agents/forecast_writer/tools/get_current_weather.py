@@ -2,6 +2,8 @@ import os
 import requests
 from typing import Dict, Any
 
+from ....cache import cached_with_ttl
+
 OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
 OPENWEATHER_BASE_URL = os.getenv("OPENWEATHER_BASE_URL", "https://api.openweathermap.org/data/2.5/weather")
 
@@ -42,9 +44,12 @@ def _format_weather_data(weather_data: Dict[str, Any], units: str = "imperial") 
         return f"Error parsing weather data: missing field {e}"
 
 
+@cached_with_ttl(ttl=900)  # Cache for 15 minutes (900 seconds)
 def get_current_weather(city: str, units: str = "imperial") -> Dict[str, Any]:
     """
     Fetch current weather data for a given city using OpenWeather API.
+
+    Results are cached for 15 minutes to reduce API calls and improve response time.
 
     Args:
         city: Name of the city to get weather for
