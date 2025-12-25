@@ -2,7 +2,7 @@ import os
 import requests
 from typing import Dict, Any
 
-from ....openweather_cache import cached_with_ttl
+from ....api_call_cache import cached_with_ttl
 
 OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
 OPENWEATHER_BASE_URL = os.getenv("OPENWEATHER_BASE_URL", "https://api.openweathermap.org/data/2.5/weather")
