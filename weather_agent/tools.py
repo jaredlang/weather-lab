@@ -12,4 +12,4 @@ def get_current_timestamp():
 
     current_time = datetime.now().strftime("%Y-%m-%d_%H%M%S")
 
-    return {"status": "success", "current_time": current_time}
+    return current_time
