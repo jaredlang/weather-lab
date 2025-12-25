@@ -11,16 +11,23 @@ load_dotenv()
 
 OUTPUT_DIR = os.getenv("OUTPUT_DIR", "output")
 
-def write_text_file(tool_context: ToolContext, directory: str) -> dict[str, str]:
+def write_text_file(tool_context: ToolContext, city_name: str) -> dict[str, str]:
+    """
+    Write the forecast text stored in the session to a text file.
+    Args:
+        tool_context: The tool context containing session state
+        city_name: The name of the city for which the forecast is being made
+    Returns:
+        dict[str, str]: A dictionary containing the status and the file_path of the saved text file.
+    """
+
     content = tool_context.state.get("FORECAST", "No forecast available at this moment. Please try again later.")
-    if not os.path.exists(directory):
-        os.makedirs(directory)
 
     # expand the current timestamp to the file name
     forecast_timestamp = tool_context.state.get("FORECAST_TIMESTAMP", get_current_timestamp())
     file_name = f"forecast_text_{forecast_timestamp}.txt"
 
-    directory = os.path.join(OUTPUT_DIR, directory)
+    directory = os.path.join(OUTPUT_DIR, city_name)
     if not os.path.exists(directory):
         os.makedirs(directory)
 

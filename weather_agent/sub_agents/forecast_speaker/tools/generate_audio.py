@@ -22,16 +22,17 @@ def _save_wave_file(file_path, pcm, channels=1, rate=24000, sample_width=2):
       wf.writeframes(pcm)
 
 
-def generate_audio(tool_context: ToolContext, content: str, tone: str="cheerfully", directory: str="") -> dict[str, str]:
+def generate_audio(tool_context: ToolContext, city_name: str, tone: str="cheerfully") -> dict[str, str]:
     # Generate docstring to explain the function
     """Generates an audio file from the given text content using text-to-speech synthesis.
         Args:
-            content (str): The text content to be converted to speech.
+            tool_context (ToolContext): The tool context containing session state
+            city_name (str): The name of the city for which the forecast is being made
             tone (str): The tone in which the content should be spoken. Default is "cheerfully".
-            directory (str): The directory where the audio file will be saved. Default is the current directory.
         Return:
             dict[str, str]: A dictionary containing the status and file path of the generated audio file.
     """
+    content = tool_context.state.get("FORECAST", "No forecast available at this moment. Please try again later.")
 
     client = genai.Client()
 
@@ -56,7 +57,7 @@ def generate_audio(tool_context: ToolContext, content: str, tone: str="cheerfull
     forecast_timestamp = tool_context.state.get("FORECAST_TIMESTAMP", get_current_timestamp())
     file_name = f"forecast_audio_{forecast_timestamp}.wav"
 
-    directory = os.path.join(OUTPUT_DIR, directory)
+    directory = os.path.join(OUTPUT_DIR, city_name)
     if not os.path.exists(directory):
         os.makedirs(directory)
 
