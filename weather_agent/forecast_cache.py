@@ -251,7 +251,7 @@ def get_cache_stats(tool_context: ToolContext) -> Dict[str, Any]:
 
     for city in city_dirs:
         # Check if this city has valid cache
-        result = get_forecast(tool_context, city)
+        result = get_forecast_from_cache(tool_context, city)
         if result['cached']:
             cities_with_valid_cache.append(city)
 
