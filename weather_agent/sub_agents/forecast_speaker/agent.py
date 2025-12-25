@@ -15,7 +15,7 @@ forecast_speaker_agent = Agent(
          1. Read the weather forecast text stored in the session with the key 'FORECAST'.
          2. Understand the forecast content and select an appropriate tone to make the announcement engaging and suitable for the weather conditions.
          3. Convert the text forecast into an engaging audio announcement using the generate_audio tool.
-         4. Store the generated audio file path in the session with the key 'FORECAST_AUDIO' in a directory named after the city.
+         4. Store the generated audio file path in the session with the key 'FORECAST_AUDIO'.
         """,
     tools=[generate_audio, set_session_value],
 )
