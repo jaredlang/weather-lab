@@ -13,7 +13,8 @@ load_dotenv()
 # vertexai.init(project=project_id, location=location)
 
 # Initialize the agent
-agent = agent_engines.get("projects/951067725786/locations/us-central1/reasoningEngines/5857804327627784192")
+AGENT_ENGINE_ID = os.getenv("AGENT_ENGINE_ID")
+agent = agent_engines.get(AGENT_ENGINE_ID)
 
 # Chat history file path
 HISTORY_DIR = Path(__file__).parent / "chat_history"
@@ -122,9 +123,9 @@ if prompt := st.chat_input("What's the current weather in New York?"):
         )
 
         for event in events:
-            print(event)
+            print("*** EVENT *** ", event)
             for part in event["content"]["parts"]:
-                print(part)
+                print(">>> PART >>> ", part)
                 if "text" in part:
                     full_response += part["text"]
                     message_placeholder.markdown(full_response + "▌")
