@@ -172,7 +172,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
                 city=arguments["city"],
                 forecast_text=arguments["forecast_text"],
                 audio_file_path=arguments["audio_file_path"],
-                timestamp=arguments["forecast_at"],
+                forecast_at=arguments["forecast_at"],
                 ttl_minutes=arguments.get("ttl_minutes", 30),
                 encoding=arguments.get("encoding"),
                 language=arguments.get("language"),

@@ -15,7 +15,7 @@ def upload_forecast(
     city: str,
     forecast_text: str,
     audio_file_path: str,
-    timestamp: str,
+    forecast_at: str,
     ttl_minutes: int = 30,
     encoding: Optional[str] = None,
     language: Optional[str] = None,
@@ -28,7 +28,7 @@ def upload_forecast(
         city: City name (e.g., 'chicago')
         forecast_text: Generated forecast text content
         audio_file_path: Path to audio WAV file to upload
-        timestamp: ISO 8601 timestamp (e.g., '2025-12-26T15:00:00Z')
+        forecast_at: when was the forecast made. ISO 8601 timestamp (e.g., '2025-12-26T15:00:00Z')
         ttl_minutes: Time-to-live in minutes (default: 30)
         encoding: Text encoding (auto-detect if None)
         language: ISO 639-1 language code (e.g., 'en', 'es', 'ja')
@@ -60,13 +60,13 @@ def upload_forecast(
             "message": f"Failed to read audio file: {e}"
         }
     
-    # Parse timestamp
+    # Parse forecast_at timestamp
     try:
-        forecast_time = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+        forecast_time = datetime.fromisoformat(forecast_at.replace('Z', '+00:00'))
     except Exception as e:
         return {
             "status": "error",
-            "message": f"Invalid timestamp format: {e}"
+            "message": f"Invalid forecast_at timestamp format: {e}"
         }
     
     expires_at = forecast_time + timedelta(minutes=ttl_minutes)

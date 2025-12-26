@@ -5,37 +5,12 @@ from google.adk.agents import Agent
 from google.adk.tools import ToolContext
 
 from .tools.get_current_weather import get_current_weather
-from ...tools import set_session_value, get_current_timestamp
+from ...tools import set_session_value
+from ...write_file import write_text_file
 
 load_dotenv()
 
 OUTPUT_DIR = os.getenv("OUTPUT_DIR", "output")
-
-def write_text_file(tool_context: ToolContext, city_name: str) -> dict[str, str]:
-    """
-    Write the forecast text stored in the session to a text file.
-    Args:
-        tool_context: The tool context containing session state
-        city_name: The name of the city for which the forecast is being made
-    Returns:
-        dict[str, str]: A dictionary containing the status and the file_path of the saved text file.
-    """
-
-    content = tool_context.state.get("FORECAST", "No forecast available at this moment. Please try again later.")
-
-    # expand the current timestamp to the file name
-    forecast_timestamp = tool_context.state.get("FORECAST_TIMESTAMP", get_current_timestamp())
-    file_name = f"forecast_text_{forecast_timestamp}.txt"
-
-    directory = os.path.join(OUTPUT_DIR, city_name)
-    if not os.path.exists(directory):
-        os.makedirs(directory)
-
-    file_path = os.path.join(directory, file_name)
-    with open(file_path, "w") as f:
-        f.write(content)
-
-    return {"status": "success", "file_path": file_path}
 
 forecast_writer_agent = Agent(
     name="forecast_writer_agent",
@@ -50,7 +25,7 @@ forecast_writer_agent = Agent(
 
         Steps to follow:
         1. Use the get_current_weather tool to obtain the current weather data.
-        2. Use the set_session_value tool to store the generated forecast in the session with the key 'FORECAST'.
+        2. Use the set_session_value tool to store the generated forecast in the session with the key 'FORECAST_TEXT'.
         3. Use the write_file tool to save the forecast to a text file in the directory named after the city.
         4. Store the file path in the session with the key 'FORECAST_TEXT_FILE'.
 

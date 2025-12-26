@@ -6,11 +6,14 @@ the Cloud SQL Python Connector with IAM authentication support.
 """
 
 import os
+from dotenv import load_dotenv
 from typing import Optional
 from google.cloud.sql.connector import Connector
 import sqlalchemy
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
+
+load_dotenv()
 
 # Cloud SQL configuration from environment variables
 PROJECT_ID = os.getenv("GCP_PROJECT_ID")

@@ -97,7 +97,7 @@ def test_2_upload_forecast():
             city=city,
             forecast_text=forecast_text,
             audio_file_path=audio_file,
-            timestamp=forecast_at,
+            forecast_at=forecast_at,
             ttl_minutes=30,
             language="en",
             locale="en-US"
@@ -212,7 +212,7 @@ def test_6_upload_multilingual():
                 city=test_case['city'],
                 forecast_text=test_case['text'],
                 audio_file_path=audio_file,
-                timestamp=datetime.now(timezone.utc).isoformat(),
+                forecast_at=datetime.now(timezone.utc).isoformat(),
                 ttl_minutes=30,
                 language=test_case['language'],
                 locale=test_case['locale'],

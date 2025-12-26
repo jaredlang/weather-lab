@@ -10,7 +10,12 @@ import json
 import subprocess
 from typing import Dict, Any, Optional
 from google.adk.tools import ToolContext
+from google.adk.agents.callback_context import CallbackContext
 
+import logging
+import google.cloud.logging
+
+from weather_agent.write_file import write_audio_file
 
 # Path to MCP server
 MCP_SERVER_PATH = os.path.join(
@@ -37,13 +42,11 @@ def _call_mcp_tool(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
 
         # Import MCP server operations directly
         import sys
+        mcp_dir = os.path.dirname(MCP_SERVER_PATH)
 
-        # Add root directory to sys.path to enable package imports
-        # MCP_SERVER_PATH is forecast_storage_mcp/server.py
-        # We need to add the parent of forecast_storage_mcp (the root directory)
-        root_dir = os.path.dirname(os.path.dirname(MCP_SERVER_PATH))
-        if root_dir not in sys.path:
-            sys.path.insert(0, root_dir)
+        # Add parent directory to enable package imports
+        if mcp_dir not in sys.path:
+            sys.path.insert(0, mcp_dir)
 
         # Import as package to support relative imports
         from forecast_storage_mcp.tools.forecast_operations import (
@@ -81,52 +84,52 @@ def _call_mcp_tool(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         }
 
 
-def upload_forecast_to_storage(
-    tool_context: ToolContext,
-    city: str,
-    forecast_text: str,
-    audio_file_path: str,
-    timestamp: str,
-    ttl_minutes: int = 30
-) -> Dict[str, str]:
+async def upload_forecast_to_storage(
+    callback_context: CallbackContext
+) -> None:
     """
     Upload complete forecast (text + audio) to Cloud SQL storage.
     
     This is an ADK tool that wraps the MCP upload_forecast tool.
     
     Args:
-        tool_context: ADK tool context
-        city: City name
-        forecast_text: Generated forecast text
-        audio_file_path: Path to audio file
-        timestamp: ISO 8601 timestamp
-        ttl_minutes: Time-to-live in minutes
+        callback_context: Agent callback context
     
     Returns:
-        Dictionary with upload status
+        None
     """
+    city = callback_context.state["CITY"]
+    forecast_text = callback_context.state["FORECAST_TEXT"]
+    audio_file_path = callback_context.state["FORECAST_AUDIO"]
+    forecast_at = callback_context.state["FORECAST_TIMESTAMP"]
+    ttl_minutes = 30  # Default TTL in minutes
+
     result = _call_mcp_tool("upload_forecast", {
         "city": city,
         "forecast_text": forecast_text,
         "audio_file_path": audio_file_path,
-        "timestamp": timestamp,
+        "forecast_at": forecast_at,
         "ttl_minutes": ttl_minutes,
         "language": "en",  # Could be made configurable
         "locale": "en-US"
     })
     
+    # callback doesn't support any return. Use logging instead.
+    logging_client = google.cloud.logging.Client()
+    logging_client.setup_logging()
+
     if result.get("status") == "success":
-        return {
+        logging.info({
             "status": "success",
             "message": f"Forecast uploaded to Cloud SQL storage",
             "forecast_id": result.get("forecast_id", ""),
             "storage_info": json.dumps(result.get("sizes", {}))
-        }
+        })
     else:
-        return {
+        logging.error({
             "status": "error",
             "message": f"Upload failed: {result.get('message', 'Unknown error')}"
-        }
+        })
 
 
 def get_cached_forecast_from_storage(
@@ -151,21 +154,23 @@ def get_cached_forecast_from_storage(
     
     if result.get("cached"):
         # Cache hit - return forecast data
+        # store audio_data into a file using write_audio_file tool
+        audio_file = write_audio_file(tool_context, city, result.get("audio_data", ""))
+
         return {
             "cached": True,
             "forecast_text": result.get("forecast_text", ""),
-            "audio_data": result.get("audio_data", ""),
+            "audio_filepath": audio_file.get("file_path", None),
             "age_seconds": result.get("age_seconds", 0),
-            "timestamp": result.get("timestamp", ""),
-            "expires_at": result.get("expires_at", "")
+            "forecast_at": result.get("forecast_at", ""),
+            "expires_at": result.get("expires_at", ""),
         }
     else:
         # Cache miss
         return {
             "cached": False,
             "forecast_text": None,
-            "audio_data": None,
-            "age_seconds": None
+            "audio_filepath": None,
         }
 
 

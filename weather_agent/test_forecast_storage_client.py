@@ -109,7 +109,7 @@ def test_2_upload_wrapper():
             city=city,
             forecast_text=forecast_text,
             audio_file_path=audio_file,
-            timestamp=timestamp,
+            forecast_at=timestamp,
             ttl_minutes=30
         )
         
@@ -198,7 +198,7 @@ def test_5_full_workflow():
             city=city,
             forecast_text=forecast_text,
             audio_file_path=audio_file,
-            timestamp=timestamp,
+            forecast_at=timestamp,
             ttl_minutes=30
         )
         
