@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Import the root-level caching functions
-from weather_agent.forecast_cache import (
+from weather_agent.caching.forecast_cache import (
     get_forecast,
     cache_forecast,
     get_cache_stats,

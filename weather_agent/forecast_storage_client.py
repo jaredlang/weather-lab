@@ -17,7 +17,7 @@ import logging
 import google.cloud.logging
 
 from weather_agent.write_file import write_audio_file
-from weather_agent.forecast_file_cleanup import cleanup_old_forecast_files_async
+from weather_agent.caching.forecast_file_cleanup import cleanup_old_forecast_files_async
 
 # Path to MCP server
 MCP_SERVER_PATH = os.path.join(
