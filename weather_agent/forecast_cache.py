@@ -20,7 +20,7 @@ Benefits:
 import os
 import time
 import glob
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional, Tuple
 from google.adk.tools import ToolContext
 
@@ -76,7 +76,7 @@ def _get_file_age_seconds(filepath: str) -> Optional[float]:
     file_dt = _parse_timestamp_from_filename(filename)
 
     if file_dt:
-        current_dt = datetime.now()
+        current_dt = datetime.now(timezone.utc)
         age = (current_dt - file_dt).total_seconds()
         return age
 

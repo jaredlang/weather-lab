@@ -11,7 +11,7 @@ Usage:
 import os
 import tempfile
 import wave
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -87,7 +87,7 @@ def test_2_upload_forecast():
         # Test data
         city = "chicago"
         forecast_text = "Weather in Chicago: Sunny with temperatures around 75°F. Light breeze from the west. Perfect day for outdoor activities! ☀️"
-        forecast_at = datetime.now().isoformat()
+        forecast_at = datetime.now(timezone.utc).isoformat()
 
         print(f"\nUploading forecast for {city}...")
         print(f"Text length: {len(forecast_text)} characters")
@@ -212,7 +212,7 @@ def test_6_upload_multilingual():
                 city=test_case['city'],
                 forecast_text=test_case['text'],
                 audio_file_path=audio_file,
-                timestamp=datetime.now().isoformat(),
+                timestamp=datetime.now(timezone.utc).isoformat(),
                 ttl_minutes=30,
                 language=test_case['language'],
                 locale=test_case['locale'],

@@ -7,9 +7,9 @@ def set_session_value(tool_context: ToolContext, key: str, value: str):
     return {"status": "success", "message": f"Set {key} to {value} in session."}
 
 def get_current_timestamp():
-    """Get the current timestamp."""
-    from datetime import datetime
+    """Get the current timestamp in UTC."""
+    from datetime import datetime, timezone
 
-    current_time = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    current_time = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%S")
 
     return current_time
