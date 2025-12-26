@@ -13,6 +13,20 @@ The weather lab project is **functionally complete** with a working multi-agent 
 
 ### Recent Changes & Optimizations
 
+#### Completed: Local File Cleanup System (2025-12-26)
+1. **Async File Cleanup** ([`forecast_file_cleanup.py`](../../weather_agent/forecast_file_cleanup.py))
+   - Automatic cleanup of forecast files older than configurable threshold
+   - Runs asynchronously after successful database upload
+   - Fire-and-forget pattern using `asyncio.create_task()`
+   - Configurable via `FORECAST_CLEANUP_DAYS` environment variable (default: 7 days)
+   - Scans entire `output/` directory structure
+   - Logs cleanup statistics (files deleted, bytes freed)
+
+2. **Integration** ([`forecast_storage_client.py:131`](../../weather_agent/forecast_storage_client.py#L131))
+   - Cleanup triggered after successful Cloud SQL upload
+   - Non-blocking execution (doesn't delay upload response)
+   - Safe error handling (cleanup failures don't affect upload)
+
 #### Completed: Two-Level Caching System
 1. **API Call Cache** ([`api_call_cache.py`](../../weather_agent/api_call_cache.py))
    - Implemented TTLCache class with time-based expiration
@@ -69,11 +83,6 @@ The weather lab project is **functionally complete** with a working multi-agent 
    - Measure latencies per operation
    - Count API calls and costs
    - Enable data-driven optimization
-
-7. **File Cleanup Strategy**
-   - Delete forecast files older than 7 days
-   - Run on agent initialization or periodic task
-   - Prevent disk space issues
 
 ## Active Decisions & Considerations
 
@@ -172,11 +181,11 @@ The weather lab project is **functionally complete** with a working multi-agent 
 4. **Conversational forecasts**: LLM generates engaging, natural text
 5. **Streamlit UI**: Clean, intuitive interface for weather queries
 
-### Pain Points Discovered
+### Pain Points Discovered (and Resolutions)
 1. **SequentialAgent limitation**: Can't conditionally skip agents
 2. **No async support in ADK**: All operations blocking
 3. **No built-in retry logic**: Must implement manually
-4. **File accumulation**: Need cleanup strategy
+4. ~~**File accumulation**: Need cleanup strategy~~ ✅ **RESOLVED** - Async cleanup implemented
 5. **Hardcoded user ID**: Not ready for multi-user deployment
 
 ### Performance Observations
@@ -220,12 +229,19 @@ The weather lab project is **functionally complete** with a working multi-agent 
 - Tools in `tools/` subdirectory
 - Sub-agents in `sub_agents/` with nested structure
 - Cache utilities at root level: `api_call_cache.py`, `forecast_cache.py`
+- Standalone utility modules: `forecast_file_cleanup.py`
 
 ### Environment Variables
 - Load with `python-dotenv`
 - Access via `os.getenv("VAR_NAME", "default")`
 - Never commit `.env` file
-- Document required variables in README (future)
+- Use [`.env.example`](../../.env.example) as template
+- Key variables:
+  - `OUTPUT_DIR`: Directory for forecast files (default: "output")
+  - `FORECAST_CLEANUP_DAYS`: File retention period (default: 7)
+  - `OPENWEATHER_API_KEY`: OpenWeather API key
+  - `PROJECT_ID`: Google Cloud project ID
+  - `LOCATION`: Google Cloud region
 
 ### Error Messages
 - User-friendly language

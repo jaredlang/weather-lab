@@ -8,6 +8,7 @@ forecast storage MCP server without dealing with MCP protocol details.
 import os
 import json
 import subprocess
+import asyncio
 from typing import Dict, Any, Optional
 from google.adk.tools import ToolContext
 from google.adk.agents.callback_context import CallbackContext
@@ -16,6 +17,7 @@ import logging
 import google.cloud.logging
 
 from weather_agent.write_file import write_audio_file
+from weather_agent.forecast_file_cleanup import cleanup_old_forecast_files_async
 
 # Path to MCP server
 MCP_SERVER_PATH = os.path.join(
@@ -125,6 +127,10 @@ async def upload_forecast_to_storage(
             "forecast_id": result.get("forecast_id", ""),
             "storage_info": json.dumps(result.get("sizes", {}))
         })
+        
+        # Fire-and-forget async cleanup (no await, no return value needed)
+        # This runs in the background and doesn't block the upload response
+        asyncio.create_task(cleanup_old_forecast_files_async())
     else:
         logging.error({
             "status": "error",
