@@ -110,30 +110,33 @@ if prompt := st.chat_input("What's the current weather in New York?"):
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # Display assistant response with streaming
-    with st.chat_message("assistant"):
-        message_placeholder = st.empty()
-        full_response = ""
-
-        # Stream the response from the agent
+    # Collect all responses from the agent
+    with st.spinner("Getting weather information..."):
         events = agent.stream_query(
             user_id=st.session_state.user_id,
             session_id=st.session_state.session_id,
             message=prompt,
         )
 
+        final_response = ""
         for event in events:
             print("*** EVENT *** ", event)
+            # Keep only the last event's text
+            event_text = ""
             for part in event["content"]["parts"]:
                 print(">>> PART >>> ", part)
                 if "text" in part:
-                    full_response += part["text"]
-                    message_placeholder.markdown(full_response + "▌")
+                    event_text += part["text"]
+            # Update to latest response (overwrite, don't append)
+            if event_text:
+                final_response = event_text
 
-        message_placeholder.markdown(full_response)
+    # Display only the final response
+    with st.chat_message("assistant"):
+        st.markdown(final_response)
 
     # Add assistant response to chat history
-    st.session_state.message_history.append({"role": "assistant", "content": full_response})
+    st.session_state.message_history.append({"role": "assistant", "content": final_response})
 
     # Save chat history to file
     save_chat_history(st.session_state.message_history, st.session_state.session_id)
