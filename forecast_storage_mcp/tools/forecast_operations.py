@@ -14,7 +14,7 @@ from .encoding import encode_text, decode_text, detect_optimal_encoding
 def upload_forecast(
     city: str,
     forecast_text: str,
-    audio_file_path: str,
+    audio_data: str,
     forecast_at: str,
     ttl_minutes: int = 30,
     encoding: Optional[str] = None,
@@ -23,24 +23,24 @@ def upload_forecast(
 ) -> Dict[str, Any]:
     """
     Upload a complete forecast (text + audio) to Cloud SQL.
-    
+
     Args:
         city: City name (e.g., 'chicago')
         forecast_text: Generated forecast text content
-        audio_file_path: Path to audio WAV file to upload
+        audio_data: Base64-encoded audio WAV data
         forecast_at: when was the forecast made. ISO 8601 timestamp (e.g., '2025-12-26T15:00:00Z')
         ttl_minutes: Time-to-live in minutes (default: 30)
         encoding: Text encoding (auto-detect if None)
         language: ISO 639-1 language code (e.g., 'en', 'es', 'ja')
         locale: Full locale (e.g., 'en-US', 'es-MX', 'ja-JP')
-    
+
     Returns:
         Dictionary with upload status and metadata
     """
     # Auto-detect optimal encoding if not specified
     if encoding is None:
         encoding = detect_optimal_encoding(forecast_text)
-    
+
     # Encode forecast text
     try:
         text_bytes, text_size, encoding_used = encode_text(forecast_text, encoding)
@@ -49,15 +49,14 @@ def upload_forecast(
             "status": "error",
             "message": f"Failed to encode text: {e}"
         }
-    
-    # Read audio file
+
+    # Decode base64 audio data
     try:
-        with open(audio_file_path, 'rb') as f:
-            audio_bytes = f.read()
+        audio_bytes = base64.b64decode(audio_data)
     except Exception as e:
         return {
             "status": "error",
-            "message": f"Failed to read audio file: {e}"
+            "message": f"Failed to decode audio data: {e}"
         }
     
     # Parse forecast_at timestamp

@@ -78,40 +78,46 @@ def test_1_connection():
 
 def test_2_upload_forecast():
     """Test uploading a forecast."""
+    import base64
     print_section("TEST 2: Upload Forecast")
-    
+
     # Create test audio file
     audio_file = create_test_audio_file()
-    
+
     try:
         # Test data
         city = "chicago"
         forecast_text = "Weather in Chicago: Sunny with temperatures around 75°F. Light breeze from the west. Perfect day for outdoor activities! ☀️"
         forecast_at = datetime.now(timezone.utc).isoformat()
 
+        # Read and encode audio file
+        with open(audio_file, 'rb') as f:
+            audio_bytes = f.read()
+            audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
+
         print(f"\nUploading forecast for {city}...")
         print(f"Text length: {len(forecast_text)} characters")
-        print(f"Audio file: {audio_file}")
+        print(f"Audio data size: {len(audio_bytes)} bytes")
 
         result = upload_forecast(
             city=city,
             forecast_text=forecast_text,
-            audio_file_path=audio_file,
+            audio_data=audio_base64,
             forecast_at=forecast_at,
             ttl_minutes=30,
             language="en",
             locale="en-US"
         )
-        
+
         print_result(result)
-        
+
         if result['status'] == 'success':
             print("\n✅ Upload test passed!")
             return True, result.get('forecast_id')
         else:
             print("\n❌ Upload test failed!")
             return False, None
-            
+
     finally:
         # Cleanup temp file
         if os.path.exists(audio_file):
@@ -180,12 +186,18 @@ def test_5_list_forecasts():
 
 def test_6_upload_multilingual():
     """Test uploading forecasts in different languages."""
+    import base64
     print_section("TEST 6: Multilingual Upload (Optional)")
-    
+
     # Create test audio file
     audio_file = create_test_audio_file()
-    
+
     try:
+        # Read and encode audio file once
+        with open(audio_file, 'rb') as f:
+            audio_bytes = f.read()
+            audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
+
         test_cases = [
             {
                 "city": "tokyo",
@@ -202,32 +214,32 @@ def test_6_upload_multilingual():
                 "encoding": None  # Auto-detect
             }
         ]
-        
+
         success_count = 0
-        
+
         for i, test_case in enumerate(test_cases, 1):
             print(f"\n--- Test Case {i}: {test_case['city']} ({test_case['language']}) ---")
-            
+
             result = upload_forecast(
                 city=test_case['city'],
                 forecast_text=test_case['text'],
-                audio_file_path=audio_file,
+                audio_data=audio_base64,
                 forecast_at=datetime.now(timezone.utc).isoformat(),
                 ttl_minutes=30,
                 language=test_case['language'],
                 locale=test_case['locale'],
                 encoding=test_case['encoding']
             )
-            
+
             if result['status'] == 'success':
                 print(f"✅ {test_case['city']}: Success (encoding: {result['encoding']})")
                 success_count += 1
             else:
                 print(f"❌ {test_case['city']}: Failed - {result.get('message')}")
-        
+
         print(f"\n{'✅' if success_count == len(test_cases) else '⚠️'} Multilingual test: {success_count}/{len(test_cases)} passed")
         return success_count > 0
-        
+
     finally:
         # Cleanup temp file
         if os.path.exists(audio_file):

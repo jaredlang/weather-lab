@@ -78,13 +78,15 @@ Upload a complete forecast (text + audio) to Cloud SQL.
 {
   "city": "chicago",
   "forecast_text": "Weather in Chicago: Sunny, 75°F",
-  "audio_file_path": "/path/to/forecast_audio_2025-12-26_150000.wav",
+  "audio_data": "<base64-encoded-wav-audio-data>",
   "forecast_at": "2025-12-26T15:00:00Z",
   "ttl_minutes": 30,
   "language": "en",
   "locale": "en-US"
 }
 ```
+
+**Note:** `audio_data` should be base64-encoded WAV audio data, not a file path. This allows the MCP server to work in remote/containerized environments.
 
 ### 2. get_cached_forecast
 

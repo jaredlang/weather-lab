@@ -5,6 +5,7 @@ This test verifies that the weather agent can properly interact with
 the forecast storage MCP server through the client wrapper functions.
 """
 
+import asyncio
 import os
 import sys
 from datetime import datetime, timezone
@@ -89,7 +90,7 @@ def test_wrapper_functions():
         # Test 3: Upload forecast (with fake data)
         print("\nTest 3: Upload forecast (simulated)")
         test_city = "TestCity"
-        test_text = "Test forecast text"
+        test_text = "Test forecast text for integration testing"
         test_timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%S")
         
         # Create a temporary test audio file
@@ -99,26 +100,52 @@ def test_wrapper_functions():
             temp_audio_path = f.name
         
         try:
-            result = upload_forecast_to_storage(
-                mock_context,
-                city=test_city,
-                forecast_text=test_text,
-                audio_file_path=temp_audio_path,
-                forecast_at=test_timestamp,
-                ttl_minutes=30
-            )
-            print(f"  Result: {result}")
-            if result.get('status') in ['success', 'error']:
-                print(f"  ✓ Upload executed (status: {result.get('status')})")
-                if result.get('status') == 'error':
-                    print(f"    Note: {result.get('message')}")
-            else:
-                print("  ✗ Upload failed unexpectedly")
-                return False
+            # mock the session state
+            mock_context.state['CITY'] = test_city
+            mock_context.state['FORECAST_TEXT'] = test_text
+            mock_context.state['FORECAST_AUDIO'] = temp_audio_path
+            mock_context.state['FORECAST_TIMESTAMP'] = test_timestamp
+            # Call upload function
+            asyncio.run(upload_forecast_to_storage(
+                mock_context
+            ))
+            print(f"  ✓ Upload function called")
         finally:
             # Cleanup temp file
             if os.path.exists(temp_audio_path):
                 os.remove(temp_audio_path)
+        
+        # Test 4: Verify cached forecast retrieval (only if upload succeeded)
+        print("\nTest 4: Verify cached forecast retrieval")
+        result = get_cached_forecast_from_storage(mock_context, test_city)
+        print(f"  Result keys: {list(result.keys())}")
+        
+        if result.get('cached') == True:
+            print("  ✓ Cache hit - forecast was successfully uploaded and retrieved")
+            
+            # Verify forecast text matches
+            if result.get('forecast_text') == test_text:
+                print("  ✓ Forecast text matches uploaded data")
+            else:
+                print(f"  ⚠ Forecast text mismatch:")
+                print(f"    Expected: {test_text}")
+                print(f"    Got: {result.get('forecast_text')}")
+            
+            # Check audio filepath
+            if result.get('audio_filepath'):
+                print(f"  ✓ Audio file retrieved: {result.get('audio_filepath')}")
+            else:
+                print("  ⚠ No audio filepath in cache result")
+            
+            # Check timestamps
+            if result.get('forecast_at'):
+                print(f"  ✓ Forecast timestamp: {result.get('forecast_at')}")
+            if result.get('expires_at'):
+                print(f"  ✓ Expires at: {result.get('expires_at')}")
+        else:
+            print("  ✗ Cache miss - uploaded forecast not found")
+            print(f"    This could indicate the upload didn't persist or TTL expired")
+            return False
         
         return True
         

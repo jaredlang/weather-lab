@@ -7,29 +7,30 @@ forecast storage MCP server without dealing with MCP protocol details.
 
 import os
 import json
-import subprocess
 import asyncio
-from typing import Dict, Any, Optional
+from typing import Dict, Any
+
 from google.adk.tools import ToolContext
 from google.adk.agents.callback_context import CallbackContext
 
 import logging
 import google.cloud.logging
+import httpx
+from mcp.client.session import ClientSession
+from mcp.client.sse import sse_client
 
 from weather_agent.write_file import write_audio_file
 from weather_agent.caching.forecast_file_cleanup import cleanup_old_forecast_files_async
 
-# Path to MCP server
-MCP_SERVER_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(__file__)),
-    "forecast_storage_mcp",
-    "server.py"
-)
+# MCP Server URL - base URL for MCP server
+# Set to localhost for local development or Cloud Run URL for production
+# Example: http://localhost:8080 or https://forecast-mcp-server-xxxxx.run.app
+MCP_SERVER_URL = os.getenv("MCP_SERVER_URL", "http://localhost:8080")
 
 
-def _call_mcp_tool(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+async def _call_mcp_tool_remote(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Internal helper to call MCP server tool.
+    Call MCP server via SSE transport using official MCP client.
 
     Args:
         tool_name: Name of the MCP tool to call
@@ -39,50 +40,55 @@ def _call_mcp_tool(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         Tool result as dictionary
     """
     try:
-        # For now, we'll import and call directly since MCP client integration
-        # with ADK is complex. In production, use proper MCP client.
+        # Connect using SSE transport - MCP client expects the /sse endpoint
+        base_url = MCP_SERVER_URL.rstrip('/')
+        sse_url = f"{base_url}/sse"
 
-        # Import MCP server operations directly
-        import sys
-        mcp_dir = os.path.dirname(MCP_SERVER_PATH)
+        async with sse_client(sse_url) as (read, write):
+            async with ClientSession(read, write) as session:
+                # Initialize session
+                await session.initialize()
 
-        # Add parent directory to enable package imports
-        if mcp_dir not in sys.path:
-            sys.path.insert(0, mcp_dir)
+                # Call the tool
+                result = await session.call_tool(tool_name, arguments)
 
-        # Import as package to support relative imports
-        from forecast_storage_mcp.tools.forecast_operations import (
-            upload_forecast,
-            get_cached_forecast,
-            get_storage_stats,
-            cleanup_expired_forecasts,
-            list_forecasts
-        )
-        from forecast_storage_mcp.tools.connection import test_connection
+                # Parse result - MCP returns list of TextContent objects
+                if result and len(result.content) > 0:
+                    # Extract text from first content item
+                    text_content = result.content[0].text
+                    if not text_content or text_content.strip() == "":
+                        logging.error(f"Empty text content from MCP server for tool: {tool_name}")
+                        return {
+                            "status": "error",
+                            "message": "Empty text content from MCP server"
+                        }
+                    try:
+                        return json.loads(text_content)
+                    except json.JSONDecodeError as e:
+                        logging.error(f"Failed to parse MCP response as JSON: {text_content[:200]}")
+                        return {
+                            "status": "error",
+                            "message": f"Invalid JSON response from server: {str(e)}"
+                        }
 
-        # Route to appropriate function
-        if tool_name == "upload_forecast":
-            return upload_forecast(**arguments)
-        elif tool_name == "get_cached_forecast":
-            return get_cached_forecast(**arguments)
-        elif tool_name == "get_storage_stats":
-            return get_storage_stats()
-        elif tool_name == "cleanup_expired_forecasts":
-            return cleanup_expired_forecasts()
-        elif tool_name == "list_forecasts":
-            return list_forecasts(**arguments)
-        elif tool_name == "test_connection":
-            return test_connection()
-        else:
-            return {
-                "status": "error",
-                "message": f"Unknown tool: {tool_name}"
-            }
+                return {
+                    "status": "error",
+                    "message": "Empty response from MCP server"
+                }
 
-    except Exception as e:
+    except httpx.ConnectError as e:
         return {
             "status": "error",
-            "message": f"MCP tool call failed: {str(e)}"
+            "message": f"Cannot connect to MCP server at {MCP_SERVER_URL}. Make sure the server is running."
+        }
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        logging.error(f"MCP call error: {error_details}")
+        return {
+            "status": "error",
+            "message": f"MCP call failed: {str(e)}",
+            "details": error_details
         }
 
 
@@ -91,25 +97,36 @@ async def upload_forecast_to_storage(
 ) -> None:
     """
     Upload complete forecast (text + audio) to Cloud SQL storage.
-    
+
     This is an ADK tool that wraps the MCP upload_forecast tool.
-    
+
     Args:
         callback_context: Agent callback context
-    
+
     Returns:
         None
     """
+    import base64
+
     city = callback_context.state["CITY"]
     forecast_text = callback_context.state["FORECAST_TEXT"]
     audio_file_path = callback_context.state["FORECAST_AUDIO"]
     forecast_at = callback_context.state["FORECAST_TIMESTAMP"]
     ttl_minutes = 30  # Default TTL in minutes
 
-    result = _call_mcp_tool("upload_forecast", {
+    # Read audio file and encode as base64 (MCP server may be remote and can't access local files)
+    try:
+        with open(audio_file_path, 'rb') as f:
+            audio_bytes = f.read()
+            audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
+    except Exception as e:
+        logging.error(f"Failed to read audio file {audio_file_path}: {e}")
+        return
+
+    result = await _call_mcp_tool_remote("upload_forecast", {
         "city": city,
         "forecast_text": forecast_text,
-        "audio_file_path": audio_file_path,
+        "audio_data": audio_base64,
         "forecast_at": forecast_at,
         "ttl_minutes": ttl_minutes,
         "language": "en",  # Could be made configurable
@@ -128,33 +145,34 @@ async def upload_forecast_to_storage(
             "storage_info": json.dumps(result.get("sizes", {}))
         })
         
-        # Fire-and-forget async cleanup (no await, no return value needed)
-        # This runs in the background and doesn't block the upload response
-        asyncio.create_task(cleanup_old_forecast_files_async())
     else:
         logging.error({
             "status": "error",
             "message": f"Upload failed: {result.get('message', 'Unknown error')}"
         })
+        
+    # Fire-and-forget async cleanup (no await, no return value needed)
+    # This runs in the background and doesn't block the upload response
+    asyncio.create_task(cleanup_old_forecast_files_async())
 
 
-def get_cached_forecast_from_storage(
+async def get_cached_forecast_from_storage(
     tool_context: ToolContext,
     city: str
 ) -> Dict[str, Any]:
     """
     Retrieve cached forecast from Cloud SQL storage if available.
-    
+
     This is an ADK tool that wraps the MCP get_cached_forecast tool.
-    
+
     Args:
         tool_context: ADK tool context
         city: City name to check
-    
+
     Returns:
         Dictionary with cache status and forecast data if cached
     """
-    result = _call_mcp_tool("get_cached_forecast", {
+    result = await _call_mcp_tool_remote("get_cached_forecast", {
         "city": city
     })
     
@@ -180,21 +198,21 @@ def get_cached_forecast_from_storage(
         }
 
 
-def get_storage_stats_from_mcp(
+async def get_storage_stats_from_mcp(
     tool_context: ToolContext
 ) -> Dict[str, Any]:
     """
     Get storage statistics from Cloud SQL.
-    
+
     This is an ADK tool that wraps the MCP get_storage_stats tool.
-    
+
     Args:
         tool_context: ADK tool context
-    
+
     Returns:
         Dictionary with storage statistics
     """
-    result = _call_mcp_tool("get_storage_stats", {})
+    result = await _call_mcp_tool_remote("get_storage_stats", {})
     
     if result.get("status") == "success":
         return {
@@ -211,21 +229,21 @@ def get_storage_stats_from_mcp(
         }
 
 
-def test_storage_connection(
+async def test_storage_connection(
     tool_context: ToolContext
 ) -> Dict[str, str]:
     """
     Test connection to Cloud SQL storage.
-    
+
     This is an ADK tool that wraps the MCP test_connection tool.
-    
+
     Args:
         tool_context: ADK tool context
-    
+
     Returns:
         Dictionary with connection status
     """
-    result = _call_mcp_tool("test_connection", {})
+    result = await _call_mcp_tool_remote("test_connection", {})
     
     if result.get("status") == "success":
         return {
