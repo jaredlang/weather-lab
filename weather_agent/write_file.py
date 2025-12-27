@@ -69,7 +69,7 @@ def write_text_file(tool_context: ToolContext, city_name: str) -> dict[str, str]
         dict[str, str]: A dictionary containing the status and the file_path of the saved text file.
     """
 
-    content = tool_context.state.get("FORECAST", "No forecast available at this moment. Please try again later.")
+    content = tool_context.state.get("FORECAST_TEXT", "No forecast available at this moment. Please try again later.")
 
     # expand the current timestamp to the file name
     forecast_timestamp = tool_context.state.get("FORECAST_TIMESTAMP", get_current_timestamp())

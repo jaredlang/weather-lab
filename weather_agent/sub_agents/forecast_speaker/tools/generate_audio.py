@@ -24,7 +24,7 @@ def generate_audio(tool_context: ToolContext, city_name: str, tone: str="cheerfu
         Return:
             dict[str, str]: A dictionary containing the status and file path of the generated audio file.
     """
-    content = tool_context.state.get("FORECAST", "No forecast available at this moment. Please try again later.")
+    content = tool_context.state.get("FORECAST_TEXT", "No forecast available at this moment. Please try again later.")
 
     client = genai.Client()
 
