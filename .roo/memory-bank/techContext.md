@@ -2,308 +2,511 @@
 
 ## Technology Stack
 
-### Core Framework
-**Google Agent Development Kit (ADK)**
-- Version: Latest (via `google-cloud-aiplatform[adk,agent_engines]`)
-- Purpose: Multi-agent orchestration framework
-- Key Classes:
-  - `Agent`: Individual agent with instructions, tools, and model
-  - `SequentialAgent`: Executes sub-agents in sequence
-  - `ToolContext`: Shared session state between agents
-- Deployment: Vertex AI Reasoning Engines
+### Core Technologies
 
-### Language Models
-**Google Gemini**
-- **Text Generation**: `gemini-2.0-flash-exp`
-  - Used for: Weather forecast text generation
-  - Context: 3-4 sentence conversational forecasts
-- **Text-to-Speech**: `gemini-2.0-flash-exp`
-  - Used for: Audio forecast generation
-  - Voice: 'Kore' (prebuilt voice config)
-  - Output format: PCM audio → WAV files (24kHz, mono, 16-bit)
+#### Python 3.11+
+- **Primary Language:** All components written in Python
+- **Type Hints:** Used throughout for clarity and IDE support
+- **Async/Await:** Used for I/O operations (MCP client, file operations)
+
+#### Google Agent Development Kit (ADK)
+- **Framework:** Agent orchestration and tool management
+- **Version:** Latest (installed via pip)
+- **Key Classes:**
+  - `Agent` - Individual agent definition
+  - `SequentialAgent` - Sequential sub-agent execution
+  - `ToolContext` - Tool invocation context
+  - `CallbackContext` - Agent lifecycle callbacks
+
+#### Model Context Protocol (MCP)
+- **Purpose:** Agent-to-storage communication protocol
+- **Transport:** Server-Sent Events (SSE) over HTTP
+- **Client Library:** `mcp` Python package
+- **Server Pattern:** Remote MCP server (not stdio)
 
 ### External APIs
-**OpenWeather API**
-- Endpoint: `https://api.openweathermap.org/data/2.5/weather`
-- Authentication: API key (query parameter)
-- Rate Limit: 60 calls/minute (free tier)
-- Response: JSON with weather data
-- Units: Imperial (°F, mph) or Metric (°C, m/s)
 
-### Python Version & Dependencies
-**Python**: 3.10+ (required for Google ADK)
+#### OpenWeather API
+- **Endpoint:** `https://api.openweathermap.org/data/2.5/weather`
+- **Authentication:** API key (free tier)
+- **Rate Limit:** 60 calls/minute
+- **Data:** Current weather conditions (temp, humidity, wind, conditions)
+- **Cache:** 15-minute TTL to reduce API calls
 
-**Core Dependencies** ([`requirements.txt`](../../requirements.txt)):
-```
-google-cloud-aiplatform[adk,agent_engines]  # Google ADK framework
-requests                                     # HTTP client for OpenWeather API
-python-dotenv                                # Environment variable management
-streamlit                                    # Web UI
-# chainlit                                   # Alternative web UI (commented)
-```
+#### Google Gemini (LLM)
+- **Purpose:** Generate conversational weather forecasts
+- **Model:** Configurable via `MODEL` env var (e.g., `gemini-1.5-flash`)
+- **Usage:** Text generation (3-4 sentence forecasts)
+- **Optimization:** 30-minute forecast cache to reduce token usage
 
-### UI Frameworks
+#### Google Text-to-Speech (TTS)
+- **Purpose:** Convert text forecasts to audio
+- **Format:** WAV audio files
+- **Language Support:** Multi-language (en, es, ja, zh, etc.)
+- **Optimization:** Conditional generation (only when requested)
 
-#### Streamlit
-**File**: [`streamlit_ui/app.py`](../../streamlit_ui/app.py)
-- **Purpose**: Primary web interface
-- **Features**:
-  - Chat-based interaction
-  - Session persistence (saves to JSON file)
-  - Clear chat history button
-  - Message streaming from agent
-- **Session Management**: 
-  - User ID: `user_123` (hardcoded)
-  - Session ID from Vertex AI agent_engines
-  - Chat history saved to `streamlit_ui/chat_history/chat_history.json`
+### Data Storage
 
-#### Chainlit
-**File**: [`chainlit_ui/app.py`](../../chainlit_ui/app.py)
-- **Purpose**: Alternative web interface
-- **Features**:
-  - Starter prompts (pre-defined queries)
-  - Real-time message streaming
-  - Welcome message on chat start
-- **Status**: Commented out in requirements.txt (not actively used)
+#### Google Cloud SQL
+- **Database:** PostgreSQL 17
+- **Instance Tiers:**
+  - Development: `db-f1-micro` (~$7/month)
+  - Production: `db-custom-2-7680` (~$130/month)
+- **Connection:** Cloud SQL Connector (not direct TCP)
+- **Features:**
+  - Auto-scaling CPU
+  - Automatic backups
+  - High availability (production)
+
+#### Local File Storage
+- **Purpose:** Temporary audio/text files
+- **Location:** `output/` directory (gitignored)
+- **Cleanup:** Automatic removal after 7 days
+- **Structure:** `output/{city}/forecast_{timestamp}.{txt,wav}`
+
+### Web Framework (REST API)
+
+#### FastAPI
+- **Version:** Latest stable
+- **Features Used:**
+  - Path parameters: `/weather/{city}`
+  - Query parameters: `?language=en&limit=10`
+  - Pydantic models for validation
+  - Automatic OpenAPI docs (`/docs`, `/redoc`)
+  - CORS middleware for web clients
+- **Server:** Uvicorn ASGI server
+
+### HTTP Clients
+
+#### `requests` (Synchronous)
+- **Usage:** OpenWeather API calls
+- **Pattern:** Session-based connection pooling
+- **Timeout:** 10 seconds
+- **Retry:** Exponential backoff decorator
+
+#### `httpx` (Async)
+- **Usage:** MCP client SSE connections
+- **Pattern:** Async context managers
+- **Timeout:** 30 seconds (MCP operations)
+
+### Testing Framework
+
+#### pytest
+- **Version:** Latest stable
+- **Plugins:**
+  - `pytest-asyncio` - Async test support
+  - `pytest-cov` - Coverage reporting
+- **Test Structure:**
+  - Unit tests: Mock external APIs
+  - Integration tests: Real MCP server
+  - Test fixtures in `conftest.py`
 
 ## Development Environment
 
-### Project Structure
+### Operating System
+- **Platform:** Windows 11
+- **Shell:** PowerShell 7
+- **Path:** `c:\source\ai.dev\weather-lab`
+
+### Constraints
+- ❌ **No Bash scripts** - Use PowerShell or Python
+- ✅ **PowerShell scripts** - `.bat` and `.ps1` files
+- ✅ **Python scripts** - Cross-platform where possible
+
+### IDE
+- **Primary:** Visual Studio Code
+- **Extensions:** Python, Pylance, MCP tools
+- **Workspace:** `c:\source\ai.dev\weather-lab`
+
+### Version Control
+- **System:** Git
+- **Ignore:** `.gitignore` excludes:
+  - `output/` - Generated files
+  - `.env` - Secrets
+  - `__pycache__/` - Python cache
+  - `.adk/` - ADK runtime
+  - `venv/` - Virtual environment
+
+## Python Dependencies
+
+### Production Dependencies
+
+#### Agent Framework
+```
+google-adk - Google Agent Development Kit
+python-dotenv - Environment variable loading
+```
+
+#### API Clients
+```
+requests - HTTP client (OpenWeather API)
+httpx - Async HTTP client (MCP SSE)
+```
+
+#### MCP
+```
+mcp - Model Context Protocol client
+```
+
+#### Database
+```
+pg8000 - PostgreSQL driver (pure Python)
+cloud-sql-python-connector - Cloud SQL connector
+```
+
+#### Web Framework (REST API)
+```
+fastapi - Web framework
+uvicorn - ASGI server
+pydantic - Data validation
+```
+
+#### Google Cloud
+```
+google-cloud-logging - Structured logging
+google-auth - GCP authentication
+```
+
+### Development Dependencies
+```
+pytest - Testing framework
+pytest-asyncio - Async test support
+pytest-cov - Coverage reporting
+```
+
+## Environment Variables
+
+### Required Variables
+
+#### OpenWeather API
+```bash
+OPENWEATHER_API_KEY=your_api_key_here
+```
+
+#### Google Cloud (Agent)
+```bash
+MODEL=gemini-1.5-flash          # LLM model
+OUTPUT_DIR=output               # Local file storage
+```
+
+#### Google Cloud (MCP Server & API)
+```bash
+GCP_PROJECT_ID=your-project-id
+CLOUD_SQL_REGION=us-central1
+CLOUD_SQL_INSTANCE=weather-forecasts
+CLOUD_SQL_DB=weather
+CLOUD_SQL_USER=postgres
+CLOUD_SQL_PASSWORD=your-password
+```
+
+#### MCP Client
+```bash
+MCP_SERVER_URL=http://localhost:8080
+# or for production:
+# MCP_SERVER_URL=https://forecast-mcp-server-xxxxx.run.app
+```
+
+#### REST API (Optional)
+```bash
+API_TITLE=Weather Forecast API
+HOST=0.0.0.0
+PORT=8000
+LOG_LEVEL=INFO
+```
+
+### Configuration Files
+- `.env.example` - Template in each component directory
+- `.env` - Actual secrets (gitignored)
+
+## Project Structure
+
 ```
 weather-lab/
-├── .venv/                      # Virtual environment
-├── .roo/                       # Roo AI configuration
-│   ├── rules/                  # Custom rules
-│   └── memory-bank/            # This directory
-├── weather_agent/              # Core agent system
-│   ├── __init__.py
-│   ├── agent.py               # Root agent
-│   ├── server.py              # Empty (future deployment?)
-│   ├── tools.py               # Shared utility tools
-│   ├── api_call_cache.py      # Level 1 caching
-│   ├── forecast_cache.py      # Level 2 caching
-│   ├── improvement-plan.md    # Optimization roadmap
-│   └── sub_agents/
-│       ├── forecast_writer/   # Text forecast generation
-│       │   ├── agent.py
-│       │   └── tools/
-│       │       └── get_current_weather.py
-│       └── forecast_speaker/  # Audio generation
-│           ├── agent.py
-│           └── tools/
-│               └── generate_audio.py
-├── streamlit_ui/              # Streamlit interface
-│   ├── app.py
-│   ├── Dockerfile             # Container deployment
-│   ├── .gitignore
-│   └── chat_history/          # Persisted sessions
-├── chainlit_ui/               # Chainlit interface
-│   ├── app.py
-│   └── chainlit.md
-├── database_mcp/              # MCP server (empty)
-├── output/                    # Generated forecasts (gitignored)
-│   └── {city}/
-│       ├── forecast_text_*.txt
-│       └── forecast_audio_*.wav
-├── .gitignore
-├── requirements.txt
-├── test_api_call_caching.py   # Unit tests
-└── test_forecast_caching.py   # Unit tests
+├── .roo/                               # Cline memory bank
+│   ├── rules/
+│   │   └── rules.md                    # Cline's rules
+│   └── memory-bank/                    # Memory bank files
+├── weather_agent/                      # Main agent system
+│   ├── agent.py                        # Root agent
+│   ├── tools.py                        # Shared tools
+│   ├── forecast_storage_client.py      # MCP client wrapper
+│   ├── write_file.py                   # File I/O
+│   ├── requirements.txt
+│   ├── .env.example
+│   ├── caching/                        # Caching layer
+│   │   ├── api_call_cache.py           # OpenWeather cache
+│   │   ├── forecast_cache.py           # Forecast cache
+│   │   └── forecast_file_cleanup.py    # File cleanup
+│   ├── sub_agents/
+│   │   ├── forecast_writer/            # Text generation
+│   │   │   ├── agent.py
+│   │   │   └── tools/
+│   │   │       └── get_current_weather.py
+│   │   └── forecast_speaker/           # Audio generation
+│   │       ├── agent.py
+│   │       └── tools/
+│   │           └── generate_audio.py
+│   └── tests/                          # Agent tests
+│       ├── test_agent_mcp_integration.py
+│       ├── test_api_call_caching.py
+│       ├── test_forecast_caching.py
+│       └── test_forecast_storage_client.py
+├── forecast_storage_mcp/               # MCP server
+│   ├── server.py                       # SSE server
+│   ├── schema.sql                      # DB schema
+│   ├── requirements.txt
+│   ├── .env.example
+│   ├── Dockerfile                      # Container config
+│   ├── README.md
+│   ├── DEPLOYMENT.md
+│   ├── INTEGRATION_PLAN.md
+│   ├── REMOTE_MCP_GUIDE.md
+│   ├── tools/
+│   │   ├── connection.py               # Cloud SQL connector
+│   │   ├── forecast_operations.py      # CRUD operations
+│   │   └── encoding.py                 # Text encoding
+│   └── tests/                          # MCP server tests
+│       ├── test_encoding.py
+│       ├── test_mcp_operations.py
+│       ├── test_mcp_server_connection.py
+│       └── test_remote_mcp.py
+├── forecast_api/                       # REST API
+│   ├── main.py                         # FastAPI app
+│   ├── config.py                       # Settings
+│   ├── requirements.txt
+│   ├── .env.example
+│   ├── Dockerfile                      # Container config
+│   ├── README.md
+│   ├── TESTING.md
+│   ├── TEST_SUMMARY.md
+│   ├── run_tests.bat                   # Windows test runner
+│   ├── run_tests.sh                    # Unix test runner
+│   ├── api/
+│   │   ├── routes/
+│   │   │   ├── weather.py              # Weather endpoints
+│   │   │   ├── stats.py                # Statistics
+│   │   │   └── health.py               # Health check
+│   │   └── models/
+│   │       └── responses.py            # Pydantic models
+│   ├── core/
+│   │   ├── database.py                 # DB wrapper
+│   │   └── exceptions.py               # Custom errors
+│   └── tests/                          # API tests
+│       └── manual_test.py
+├── output/                             # Generated files (gitignored)
+└── .gitignore                          # Git ignore rules
 ```
 
-### Environment Configuration
-**File**: `.env` (not tracked in git)
+## Build & Run Commands
 
-Required variables:
+### Weather Agent (Local)
+```powershell
+cd weather_agent
+pip install -r requirements.txt
+# Set environment variables in .env
+# Run via Google ADK CLI or programmatically
+```
+
+### MCP Server (Local)
+```powershell
+cd forecast_storage_mcp
+pip install -r requirements.txt
+python server.py
+# Server runs on http://localhost:8080
+```
+
+### REST API (Local)
+```powershell
+cd forecast_api
+pip install -r requirements.txt
+uvicorn main:app --reload --port 8000
+# API at http://localhost:8000
+# Docs at http://localhost:8000/docs
+```
+
+### Docker Build (MCP Server)
+```powershell
+cd forecast_storage_mcp
+docker build -t forecast-mcp-server .
+docker run -p 8080:8080 --env-file .env forecast-mcp-server
+```
+
+### Docker Build (REST API)
+```powershell
+cd forecast_api
+docker build -t weather-forecast-api .
+docker run -p 8000:8000 --env-file .env weather-forecast-api
+```
+
+### Cloud Run Deployment (MCP Server)
 ```bash
-# Google Cloud / Vertex AI
-MODEL=gemini-2.0-flash-exp
-TTS_MODEL=gemini-2.0-flash-exp
-AGENT_ENGINE_ID=projects/{project_id}/locations/{location}/reasoningEngines/{engine_id}
-
-# OpenWeather API
-OPENWEATHER_API_KEY={your_api_key}
-OPENWEATHER_BASE_URL=https://api.openweathermap.org/data/2.5/weather
-
-# File Output
-OUTPUT_DIR=output
+cd forecast_storage_mcp
+gcloud run deploy forecast-mcp-server \
+  --source . \
+  --platform managed \
+  --region us-central1 \
+  --set-env-vars GCP_PROJECT_ID=your-project \
+  --allow-unauthenticated
 ```
 
-### Local Development Setup
-1. **Create virtual environment**:
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate  # Windows: .venv\Scripts\activate
-   ```
+### Cloud Run Deployment (REST API)
+```bash
+cd forecast_api
+gcloud run deploy weather-forecast-api \
+  --source . \
+  --platform managed \
+  --region us-central1 \
+  --set-env-vars GCP_PROJECT_ID=your-project \
+  --allow-unauthenticated
+```
 
-2. **Install dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
+## Testing Commands
 
-3. **Configure environment**:
-   - Copy `.env.example` to `.env` (if exists)
-   - Add API keys and project IDs
+### Run All Tests
+```powershell
+# Weather Agent
+cd weather_agent
+pytest
 
-4. **Run Streamlit UI**:
-   ```bash
-   cd streamlit_ui
-   streamlit run app.py
-   ```
+# MCP Server
+cd forecast_storage_mcp
+pytest
 
-5. **Run Chainlit UI**:
-   ```bash
-   cd chainlit_ui
-   chainlit run app.py
-   ```
+# REST API
+cd forecast_api
+pytest
+# or
+.\run_tests.bat
+```
+
+### Run Specific Test
+```powershell
+pytest tests/test_forecast_storage_client.py
+pytest tests/test_api_call_caching.py -v
+```
+
+### Run with Coverage
+```powershell
+pytest --cov=. --cov-report=html
+# Open htmlcov/index.html in browser
+```
+
+### Manual Integration Test
+```powershell
+# Start servers first
+# Then run:
+cd forecast_api
+python tests/manual_test.py
+```
+
+## Development Workflow
+
+### 1. Local Development
+1. Install dependencies: `pip install -r requirements.txt`
+2. Configure `.env` file with secrets
+3. Start MCP server: `python forecast_storage_mcp/server.py`
+4. Run agent or API locally
+5. Test with curl or Python client
+
+### 2. Testing
+1. Write unit tests with mocked external APIs
+2. Write integration tests with real MCP server
+3. Run `pytest` to validate
+4. Check coverage: `pytest --cov`
+
+### 3. Deployment
+1. Build Docker image
+2. Test locally with Docker
+3. Push to GCP Artifact Registry
+4. Deploy to Cloud Run
+5. Update `MCP_SERVER_URL` for production
 
 ## Technical Constraints
 
-### Google ADK Limitations
-1. **Synchronous Only**: No native async/await support
-   - All operations are blocking
-   - Cannot parallelize text and audio generation
-   - Sequential execution required
-
-2. **Session State**: Only `ToolContext.state` for agent communication
-   - No direct return values from sub-agents
-   - All data must flow through session dictionary
-   - State persists only during single conversation
-
-3. **Tool Function Signatures**: Must accept `ToolContext` as first param
-   - Example: `def tool(tool_context: ToolContext, arg1: str) -> Dict[str, Any]`
-
-### File System Requirements
-- Write permissions in `OUTPUT_DIR` (default: `./output/`)
-- Persistent storage for forecast caching
-- Cleanup strategy needed (files accumulate over time)
-
 ### API Rate Limits
-**OpenWeather Free Tier**:
-- 60 calls/minute
-- 1,000 calls/day
-- No rate limiting implemented yet (see improvement-plan.md)
+- OpenWeather: 60 calls/minute (free tier)
+- Gemini: Model-dependent (high limits)
+- Google TTS: High limits (pay per character)
 
-**Google Gemini**:
-- Rate limits depend on project quota
-- TTS calls can be expensive in high-volume scenarios
+### Database Limits
+- Cloud SQL connections: 100 (db-f1-micro)
+- Storage: 10GB (dev), 50GB+ (prod)
+- Query timeout: 30 seconds
 
-### Network Dependencies
-- Internet connection required for:
-  - OpenWeather API calls
-  - Google Gemini LLM calls
-  - Google Gemini TTS calls
-- No offline mode available
+### Cloud Run Limits
+- Memory: 512MB (default), up to 8GB
+- CPU: 1 vCPU (default), up to 8
+- Timeout: 300 seconds (5 minutes)
+- Concurrency: 80 requests per instance
 
-## Deployment Considerations
+### File System
+- Cloud Run: Ephemeral filesystem
+- Local files lost on restart
+- Use Cloud SQL for persistence
 
-### Vertex AI Deployment
-**Agent Engine ID**: Retrieved via Vertex AI console or CLI
-- Format: `projects/{id}/locations/{location}/reasoningEngines/{engine_id}`
-- Used by UI apps to connect to deployed agent
+## Performance Targets
 
-### Docker Support
-**File**: [`streamlit_ui/Dockerfile`](../../streamlit_ui/Dockerfile)
-- Containerization support for Streamlit UI
-- Can deploy to Cloud Run, GKE, or other container platforms
+### Response Times
+- Cached forecast: < 1 second
+- New forecast (no audio): 3-5 seconds
+- New forecast (with audio): 5-10 seconds
+- REST API (cached): < 500ms
 
-### State Persistence
-**Streamlit**: Chat history saved to JSON file
-- Path: `streamlit_ui/chat_history/chat_history.json`
-- Survives application restarts
-- Single user assumed (`user_123`)
+### Throughput
+- Agent: 10-20 requests/minute
+- MCP server: 100+ requests/minute
+- REST API: 100+ requests/minute
+- Database: 1000+ queries/minute
 
-**Agent Session**: Managed by Vertex AI
-- Session ID from `agent.create_session(user_id)`
-- State persists during conversation
-- New session = fresh state
+### Resource Usage
+- Memory: < 256MB per component
+- CPU: < 0.5 vCPU average
+- Storage: < 1GB forecasts
+- Bandwidth: < 10GB/month
 
-## Development Tools
+## Monitoring & Logging
 
-### Testing
-- **Unit Tests**: `test_api_call_caching.py`, `test_forecast_caching.py`
-- **Manual Testing**: Use Streamlit/Chainlit UIs
-- **Cache Inspection**: Check `output/` directory for files
+### Logging
+- Google Cloud Logging for structured logs
+- Python `logging` module
+- Log levels: DEBUG, INFO, WARNING, ERROR
 
-### Debugging
-1. **Print Statements**: Scattered throughout for event tracking
-   - Streamlit: `print("*** EVENT *** ", event)`
-   - Chainlit: `print(event)`, `print(part)`
-2. **File Inspection**: Check generated `.txt` and `.wav` files
-3. **Cache Debugging**: Use `get_cache_stats()` tool
-4. **Session State**: Print `tool_context.state` in tools
+### Metrics
+- Cache hit rates
+- Response latencies
+- API call counts
+- Error rates
+- Storage usage
 
-### Git Ignore Patterns
-From [`.gitignore`](../../.gitignore):
-- `.venv/` - Virtual environment
-- `output/` - Generated forecasts
-- `.env` - Secrets
-- `__pycache__/`, `*.pyc` - Python bytecode
-- `chat_history/` - Streamlit sessions
+### Health Checks
+- `/health` endpoint (REST API)
+- `test_connection` tool (MCP)
+- Database connectivity checks
+- External API availability
 
-## Performance Characteristics
+## Security Best Practices
 
-### Caching Strategy Impact
-| Scenario | Weather API | LLM | TTS | Total Time |
-|----------|-------------|-----|-----|------------|
-| Level 2 Cache Hit | ✗ Skip | ✗ Skip | ✗ Skip | 1-2s |
-| Level 1 Cache Hit | ✗ Skip | ✓ Generate | ✓ Generate | 8-12s |
-| Complete Miss | ✓ Call | ✓ Generate | ✓ Generate | 12-18s |
+1. **Environment Variables:** Never commit `.env` files
+2. **API Keys:** Rotate regularly
+3. **Cloud SQL:** Use Cloud SQL Connector (not public IP)
+4. **HTTPS:** Always use HTTPS in production
+5. **Input Validation:** Sanitize all user inputs
+6. **Rate Limiting:** Protect against abuse
+7. **Least Privilege:** Minimal IAM permissions
 
-### Memory Usage
-- **In-Memory Cache**: Minimal (Level 1 cache for weather data)
-- **File System**: Grows over time (needs cleanup strategy)
-- **Session State**: Small dictionary per conversation
+## Cost Optimization
 
-### Scalability
-**Current Limitations**:
-- Single-threaded Python application
-- No load balancing
-- File system cache not distributed
-- Hardcoded user ID in UIs
+### Current Costs (Development)
+- Cloud SQL (db-f1-micro): ~$7/month
+- Cloud Run (MCP + API): ~$0 (within free tier)
+- OpenWeather API: $0 (free tier)
+- Gemini: ~$1-5/month (with caching)
+- Google TTS: ~$1-3/month (conditional generation)
+- **Total:** ~$10-15/month
 
-**Scale Considerations**:
-- Multiple instances = separate file caches (inefficient)
-- Need Redis/Memcached for distributed caching
-- Database for session management at scale
-
-## Known Technical Debt
-
-From [`improvement-plan.md`](../../weather_agent/improvement-plan.md):
-
-1. **No Retry Logic**: Single-attempt API calls can fail
-2. **No Timeouts**: Requests can hang indefinitely
-3. **No Connection Pooling**: New TCP connection per API call
-4. **No Rate Limiting**: Risk of hitting OpenWeather quotas
-5. **Synchronous I/O**: Blocking file writes and HTTP requests
-6. **Always Generates Audio**: Even when user doesn't need it
-7. **No Monitoring**: No metrics on cache hit rates, latencies, errors
-8. **No File Cleanup**: Output directory grows unbounded
-
-## Security Considerations
-
-### API Key Management
-- ✅ Keys stored in `.env` (not in git)
-- ✅ Loaded via `python-dotenv`
-- ⚠️ No key rotation mechanism
-- ⚠️ No secrets manager integration (e.g., Google Secret Manager)
-
-### User Data
-- No authentication system
-- Hardcoded user ID (`user_123`)
-- Chat history stored locally (not encrypted)
-- No PII handling considerations
-
-### Network Security
-- All API calls over HTTPS
-- No request signing beyond API keys
-- No input validation on city names (potential injection risks)
-
-## Future Technical Improvements
-
-1. **Async/Await**: If ADK adds support, refactor for async
-2. **Distributed Cache**: Redis for multi-instance deployments
-3. **Database**: PostgreSQL for session management
-4. **Monitoring**: Prometheus/Grafana for metrics
-5. **Authentication**: Add OAuth2 for multi-user support
-6. **MCP Server**: Complete `database_mcp/` for external data access
+### Production Scaling
+- Cloud SQL (db-custom-2-7680): ~$130/month
+- Cloud Run: ~$20-50/month (auto-scaling)
+- Storage: ~$10/month
+- APIs: ~$10-30/month
+- **Total:** ~$170-220/month (1000s of requests/day)

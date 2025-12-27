@@ -2,288 +2,397 @@
 
 ## Architecture Overview
 
-### Multi-Agent Hierarchy
 ```
-root_agent (weather_agent)
-├── Tool: get_forecast_from_cache
-├── Tool: cache_forecast
-├── Tool: get_cache_stats
-├── Tool: set_session_value
-├── Tool: get_current_timestamp
-└── Sub-Agent: weather_studio_team (SequentialAgent)
-    ├── forecast_writer_agent
-    │   ├── Tool: get_current_weather
-    │   ├── Tool: set_session_value
-    │   └── Tool: write_text_file
-    └── forecast_speaker_agent
-        ├── Tool: generate_audio
-        └── Tool: set_session_value
+┌─────────────────────────────────────────────────────────────┐
+│                        User Interface                        │
+│                  (Chat, API Client, curl)                   │
+└────────────────────┬────────────────────┬───────────────────┘
+                     │                    │
+                     │                    │
+           ┌─────────▼──────────┐  ┌──────▼──────────┐
+           │  Weather Agent     │  │  Forecast API   │
+           │  (Google ADK)      │  │  (FastAPI)      │
+           └─────────┬──────────┘  └──────┬──────────┘
+                     │                    │
+                     │ MCP (SSE)          │ Direct SQL
+                     │                    │
+           ┌─────────▼────────────────────▼──────────┐
+           │    Forecast Storage MCP Server          │
+           │         (Python SSE Server)             │
+           └─────────┬───────────────────────────────┘
+                     │
+                     │ Cloud SQL Connector
+                     │
+           ┌─────────▼───────────┐
+           │  Cloud SQL          │
+           │  PostgreSQL         │
+           │  (forecasts table)  │
+           └─────────────────────┘
 ```
+
+## Component Architecture
+
+### 1. Weather Agent (weather_agent/)
+**Purpose:** Orchestrate weather forecast generation and delivery
+
+**Structure:**
+```
+weather_agent/
+├── agent.py                    # Root agent orchestration
+├── tools.py                    # Shared utility tools
+├── forecast_storage_client.py  # MCP client wrapper
+├── write_file.py               # File I/O utilities
+├── caching/                    # Caching layer
+│   ├── api_call_cache.py       # OpenWeather API cache (15 min TTL)
+│   ├── forecast_cache.py       # Forecast cache integration
+│   └── forecast_file_cleanup.py # Old file cleanup
+└── sub_agents/
+    ├── forecast_writer/        # Text generation sub-agent
+    │   ├── agent.py
+    │   └── tools/
+    │       └── get_current_weather.py  # OpenWeather API client
+    └── forecast_speaker/       # Audio generation sub-agent
+        ├── agent.py
+        └── tools/
+            └── generate_audio.py       # Google TTS client
+```
+
+**Design Pattern:** Sequential Agent Pattern
+- Root agent delegates to sequential sub-agents
+- Each sub-agent specializes in one task
+- State shared via session context
+
+**Key Flow:**
+1. Root agent checks Cloud SQL cache via MCP client
+2. If cached: Skip sub-agents, return immediately
+3. If not cached:
+   - Delegate to `forecast_writer_agent` → generates text
+   - Conditionally delegate to `forecast_speaker_agent` → generates audio
+   - Upload results to Cloud SQL via MCP client
+4. Background cleanup of old files
+
+### 2. Forecast Storage MCP Server (forecast_storage_mcp/)
+**Purpose:** MCP server for agent-to-storage communication
+
+**Structure:**
+```
+forecast_storage_mcp/
+├── server.py                   # SSE MCP server entry point
+├── schema.sql                  # Database schema
+├── tools/
+│   ├── connection.py           # Cloud SQL connector
+│   ├── forecast_operations.py  # CRUD operations
+│   └── encoding.py             # Text encoding utilities
+└── tests/                      # MCP server tests
+```
+
+**Design Pattern:** Model Context Protocol (MCP)
+- SSE transport for remote communication
+- Tools exposed: upload_forecast, get_cached_forecast, cleanup, stats, list, test_connection
+- Stateless server design
+
+**Key Features:**
+- Binary storage (BYTEA) for text and audio
+- Automatic encoding detection (utf-8/16/32)
+- TTL-based expiration management
+- Storage statistics and per-city breakdown
+
+### 3. Forecast API (forecast_api/)
+**Purpose:** REST API for external clients
+
+**Structure:**
+```
+forecast_api/
+├── main.py                     # FastAPI app entry point
+├── config.py                   # Settings management
+├── api/
+│   ├── routes/
+│   │   ├── weather.py          # GET /weather/{city}
+│   │   ├── stats.py            # GET /stats
+│   │   └── health.py           # GET /health
+│   └── models/
+│       └── responses.py        # Pydantic schemas
+└── core/
+    ├── database.py             # Database wrapper
+    └── exceptions.py           # Custom exceptions
+```
+
+**Design Pattern:** REST API with Direct SQL
+- Reuses connection code from MCP server
+- No MCP overhead for API clients
+- FastAPI auto-generates OpenAPI docs
+
+**Key Endpoints:**
+- `GET /weather/{city}?language=en` - Latest forecast
+- `GET /weather/{city}/history` - Forecast history
+- `GET /stats` - Storage statistics
+- `GET /health` - Health check
 
 ## Key Design Patterns
 
-### 1. Sequential Agent Pattern
-**Location**: [`weather_agent/agent.py:13-20`](../../weather_agent/agent.py#L13-L20)
+### 1. Multi-Level Caching Strategy
 
-The `weather_studio_team` uses SequentialAgent to ensure ordered execution:
-- First: `forecast_writer_agent` generates text forecast
-- Then: `forecast_speaker_agent` converts to audio
+```
+┌──────────────────────────────────────────────┐
+│ Level 1: API Call Cache (15 min)            │
+│ - In-memory dictionary with TTL             │
+│ - File: weather_agent/caching/api_call_cache.py
+│ - Key: f"{city}_{units}"                    │
+│ - Reduces OpenWeather API calls by 80%+     │
+└──────────────────────────────────────────────┘
+                     │
+                     ▼
+┌──────────────────────────────────────────────┐
+│ Level 2: Forecast Cache (30 min)            │
+│ - Cloud SQL PostgreSQL                      │
+│ - File: forecast_storage_mcp/tools/forecast_operations.py
+│ - Key: city + language                      │
+│ - Reduces LLM+TTS calls by 70%+             │
+└──────────────────────────────────────────────┘
+                     │
+                     ▼
+┌──────────────────────────────────────────────┐
+│ Level 3: File Cleanup (7 days)              │
+│ - Background async task                     │
+│ - File: weather_agent/caching/forecast_file_cleanup.py
+│ - Prevents disk space issues                │
+└──────────────────────────────────────────────┘
+```
 
-**Trade-off**: Always executes both agents. Future optimization: conditional audio generation by attaching agents directly to root_agent.
+### 2. Conditional Execution Pattern
 
-### 2. Session State Pattern
-**Files**: 
-- [`weather_agent/tools.py`](../../weather_agent/tools.py)
-- All agent instructions reference `{CITY}`, `{WEATHER_TYPE}`, `{FORECAST}`, etc.
+**Location:** [`weather_agent/agent.py:19-30`](weather_agent/agent.py:19-30)
 
-**How it works**:
-- `ToolContext.state` is a shared dictionary across agents
-- Root agent stores: `CITY`, `WEATHER_TYPE`, `FORECAST_TIMESTAMP`
-- Sub-agents read from and write to this shared state
-- Session persists across tool calls within same conversation
-
-**Critical Keys**:
-- `CITY`: User's requested city
-- `WEATHER_TYPE`: Type of forecast (defaults to "current weather condition")
-- `FORECAST_TIMESTAMP`: Generated once, used in filenames
-- `FORECAST`: Text forecast content
-- `FORECAST_TEXT_FILE`: Path to saved text file
-- `FORECAST_AUDIO`: Path to saved audio file
-
-### 3. Two-Level Caching Strategy
-
-#### Level 1: Weather API Cache (15 minutes)
-**File**: [`weather_agent/api_call_cache.py`](../../weather_agent/api_call_cache.py)
-
-**Implementation**:
 ```python
-@cached_with_ttl(ttl=900)  # 15 minutes
-def get_current_weather(city: str, units: str = "imperial"):
-    # API call to OpenWeather
+async def conditional_upload_forecast(callback_context):
+    """Upload only if not from cache."""
+    if callback_context.state.get("FORECAST_CACHED", False):
+        return  # Skip upload for cached forecasts
+    await upload_forecast_to_storage(callback_context)
 ```
 
-**Pattern**: TTLCache class with decorator
-- In-memory cache: `{cache_key: (value, timestamp)}`
-- Auto-expiration on get() if TTL exceeded
-- Cache key: `f"{func_name}:{args}:{kwargs}"`
+**Benefits:**
+- Avoids duplicate storage writes
+- Reduces Cloud SQL write costs
+- Faster response for cached requests
 
-**Why 15 minutes**: Weather updates every 10-30 minutes, balancing freshness vs cost
+### 3. Remote MCP Pattern
 
-#### Level 2: Complete Forecast Cache (30 minutes)
-**File**: [`weather_agent/forecast_cache.py`](../../weather_agent/forecast_cache.py)
+**Location:** [`weather_agent/forecast_storage_client.py:31-92`](weather_agent/forecast_storage_client.py:31-92)
 
-**Implementation**: Filesystem-based
-- Scans `output/{city}/` for matching text + audio files
-- Parses timestamps from filenames: `forecast_text_2025-12-25_143022.txt`
-- Returns cached if both files exist and age < 30 minutes
-- No in-memory state → survives restarts
+**Key Innovation:** Base64 audio encoding for remote compatibility
+```python
+# MCP server may be remote and can't access local files
+audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
 
-**Why 30 minutes**: Complete forecasts change less frequently, LLM generation is expensive
-
-### 4. Filesystem as Source of Truth
-
-**Directory Structure**:
-```
-output/
-└── {city_name}/
-    ├── forecast_text_{timestamp}.txt
-    └── forecast_audio_{timestamp}.wav
+result = await _call_mcp_tool_remote("upload_forecast", {
+    "audio_data": audio_base64  # Not a file path!
+})
 ```
 
-**Timestamp Format**: `YYYY-MM-DD_HHMMSS` (e.g., `2025-12-25_143022`)
+**Why:** Enables MCP server deployment on Cloud Run (no local filesystem access)
 
-**Benefits**:
-- Persistent across restarts
-- Easy to debug and inspect
-- No database complexity
-- Cache cleanup is just file deletion
+### 4. Error Handling & Retry Pattern
 
-**File Operations**:
-- Created by: [`forecast_writer_agent`](../../weather_agent/sub_agents/forecast_writer/agent.py#L14-L38) (text), [`forecast_speaker_agent`](../../weather_agent/sub_agents/forecast_speaker/agent.py#L25) (audio)
-- Read by: [`get_forecast_from_cache()`](../../weather_agent/forecast_cache.py#L86)
-- Cleaned by: `cleanup_expired()` (future enhancement)
+**Location:** [`weather_agent/caching/api_call_cache.py`](weather_agent/caching/api_call_cache.py)
+
+**Strategy:**
+- Retry transient failures (5xx errors, timeouts)
+- Don't retry client errors (4xx)
+- Exponential backoff: 1s → 2s → 4s
+- Max 3 retries before failing
+
+### 5. Session State Management
+
+**Pattern:** Shared state dictionary across agent hierarchy
+
+**Key State Variables:**
+```python
+state = {
+    "CITY": str,                    # User's requested city
+    "WEATHER_TYPE": str,            # Type of forecast
+    "FORECAST_TIMESTAMP": str,      # ISO 8601 timestamp
+    "FORECAST_TEXT": str,           # Generated text
+    "FORECAST_AUDIO": str,          # Audio file path
+    "FORECAST_TEXT_FILE": str,      # Text file path
+    "FORECAST_CACHED": bool,        # Cache hit indicator
+}
+```
+
+**Usage:** Passed via [`ToolContext`](weather_agent/agent.py:73-75) to all tools
 
 ## Critical Implementation Paths
 
-### Path 1: Cache Hit (Fast Path)
-1. User asks: "What's the weather in Seattle?"
-2. Root agent extracts `city="Seattle"`, stores in session
-3. Root agent calls `get_forecast_from_cache(city="Seattle")`
-4. Filesystem check finds valid files (age < 30 min)
-5. Reads text content, returns paths
-6. Root agent stores in session: `FORECAST`, `FORECAST_TEXT_FILE`, `FORECAST_AUDIO`
-7. **SKIP weather_studio_team entirely**
-8. Return result to user (< 2 seconds)
+### Path 1: Cached Forecast (Fast Path)
+**Duration:** < 1 second
 
-**Key Decision Point**: Line 43 in [`agent.py`](../../weather_agent/agent.py#L43)
-> "If cached is True... SKIP calling weather_studio_team entirely"
+1. User asks for weather → Root agent
+2. Root agent calls [`get_cached_forecast_from_storage()`](weather_agent/forecast_storage_client.py:159-198)
+3. MCP client calls remote MCP server via SSE
+4. MCP server queries Cloud SQL
+5. If found: Decode text, write audio file, return
+6. Root agent skips sub-agents entirely
+7. Return to user immediately
 
-### Path 2: Cache Miss (Slow Path)
-1. User asks: "What's the weather in Paris?"
-2. Root agent extracts `city="Paris"`, stores in session
-3. Root agent calls `get_forecast_from_cache(city="Paris")`
-4. No valid cache found → `cached=False`
-5. Root agent delegates to `weather_studio_team`
-6. **forecast_writer_agent**:
-   - Calls `get_current_weather(city="Paris")` → might hit Level 1 cache (15 min)
-   - Generates text forecast using LLM
-   - Stores in session as `FORECAST`
-   - Writes to file, stores path as `FORECAST_TEXT_FILE`
-7. **forecast_speaker_agent**:
-   - Reads `FORECAST` from session
-   - Generates audio via Gemini TTS
-   - Writes to file, stores path as `FORECAST_AUDIO`
-8. Root agent calls `cache_forecast()` to confirm files exist
-9. Return result to user (5-15 seconds)
+### Path 2: New Forecast (Slow Path)
+**Duration:** 5-10 seconds
 
-### Path 3: Weather API Cache Hit (Medium Path)
-1. Two users ask about same city within 15 minutes
-2. First user: Full slow path (cache miss)
-3. Second user: 
-   - Level 2 cache miss (different timestamp or > 30 min)
-   - Delegates to weather_studio_team
-   - **Level 1 cache hit**: `get_current_weather()` returns cached data instantly
-   - Skips OpenWeather API call
-   - Still generates new LLM forecast + audio
-   - Saves new files with new timestamp
-4. Return result (8-12 seconds - saved weather API call only)
+1. User asks for weather → Root agent
+2. Cache check returns `cached: false`
+3. Root agent delegates to `weather_studio_team` (SequentialAgent)
+4. `forecast_writer_agent`:
+   - Calls [`get_current_weather()`](weather_agent/sub_agents/forecast_writer/tools/get_current_weather.py) (check cache first)
+   - Generates LLM forecast (Gemini)
+   - Stores in session state
+   - Writes text file
+5. `forecast_speaker_agent` (if audio requested):
+   - Calls [`generate_audio()`](weather_agent/sub_agents/forecast_speaker/tools/generate_audio.py)
+   - Google TTS generates WAV
+   - Stores in session state
+6. Root agent [`after_agent_callback`](weather_agent/agent.py:19-30):
+   - Uploads to Cloud SQL via MCP
+   - Background cleanup of old files
+7. Return to user
 
-## Component Relationships
+### Path 3: REST API Request
+**Duration:** < 500ms
 
-### Root Agent → Sub-Agents Communication
-**Method**: Session state (`tool_context.state`)
-- Root writes: `CITY`, `WEATHER_TYPE`, `FORECAST_TIMESTAMP`
-- Sub-agents read these values
-- Sub-agents write: `FORECAST`, `FORECAST_TEXT_FILE`, `FORECAST_AUDIO`
-- Root reads back results
+1. Client: `GET /weather/chicago`
+2. FastAPI router: [`weather.py:get_latest_forecast()`](forecast_api/api/routes/weather.py)
+3. Database wrapper: Direct Cloud SQL query (no MCP overhead)
+4. Decode text (utf-8/16/32), encode audio (base64)
+5. Return JSON response with forecast + metadata
 
-**No direct return values**: Agents communicate only through session state
+## Component Communication
 
-### Tool → Agent Communication
-**Method**: Return dictionaries
+### Agent → MCP Server (SSE Transport)
 ```python
-def get_current_weather(city: str) -> Dict[str, Any]:
-    return formatted_string  # Actually returns string for this tool
-
-def write_text_file(tool_context: ToolContext, city_name: str) -> Dict[str, str]:
-    return {"status": "success", "file_path": file_path}
+# weather_agent/forecast_storage_client.py
+async with sse_client(sse_url) as (read, write):
+    async with ClientSession(read, write) as session:
+        result = await session.call_tool(tool_name, arguments)
 ```
 
-### API Integrations
-1. **OpenWeather API**
-   - Endpoint: `https://api.openweathermap.org/data/2.5/weather`
-   - Auth: API key in query params
-   - Rate limit: 60 calls/minute (free tier)
-   - Implementation: [`get_current_weather.py`](../../weather_agent/sub_agents/forecast_writer/tools/get_current_weather.py)
-
-2. **Google Gemini TTS**
-   - SDK: `google.genai.Client()`
-   - Model: Specified in `TTS_MODEL` env var
-   - Voice: 'Kore' (prebuilt)
-   - Output: PCM audio data → saved as WAV
-   - Implementation: [`generate_audio.py`](../../weather_agent/sub_agents/forecast_speaker/tools/generate_audio.py)
-
-## Error Handling Patterns
-
-### Current State (Basic)
-1. **API Errors**: Try/except in [`get_current_weather.py:72-76`](../../weather_agent/sub_agents/forecast_writer/tools/get_current_weather.py#L72-L76)
-   - Returns error dict instead of raising
-   - Agent can see error and inform user
-
-2. **File Errors**: Try/except in [`forecast_cache.py:176-180`](../../weather_agent/forecast_cache.py#L176-L180)
-   - Returns None if file read fails
-   - Graceful degradation
-
-### Missing (From improvement-plan.md)
-- No retry logic with exponential backoff
-- No timeouts on HTTP requests
-- No connection pooling
-- No rate limiting protection
-
-## Performance Characteristics
-
-### Current Timings (Estimated)
-- **Cache hit**: 1-2 seconds (file I/O only)
-- **API cache hit, forecast miss**: 8-12 seconds (LLM + TTS, skip API)
-- **Complete miss**: 12-18 seconds (API + LLM + TTS)
-- **OpenWeather API call**: 200-500ms
-- **LLM forecast generation**: 2-4 seconds
-- **TTS audio generation**: 3-8 seconds
-
-### Bottlenecks (Identified)
-1. **TTS is slowest** (3-8 sec) → conditional generation highest priority
-2. **Sequential execution** → can't parallelize text/audio (ADK limitation)
-3. **No async/await** → blocking I/O operations
-4. **Redundant API calls** → partially solved by Level 1 cache
-
-## Data Flow Diagram
-
-```
-User Query
-    ↓
-[Root Agent]
-    ↓
-Check Level 2 Cache (Filesystem)
-    ↓
-    ├── Cache Hit → Return (1-2s)
-    ↓
-    └── Cache Miss
-        ↓
-    [weather_studio_team]
-        ↓
-    [forecast_writer_agent]
-        ↓
-    Check Level 1 Cache (Memory)
-        ↓
-        ├── Cache Hit → Skip API call
-        ↓
-        └── Cache Miss → OpenWeather API (200-500ms)
-        ↓
-    Generate Text Forecast (LLM: 2-4s)
-        ↓
-    Write Text File
-        ↓
-    [forecast_speaker_agent]
-        ↓
-    Generate Audio (TTS: 3-8s)
-        ↓
-    Write Audio File
-        ↓
-    [Root Agent]
-        ↓
-    Confirm Cache
-        ↓
-    Return to User (12-18s)
+### API → Cloud SQL (Direct Connection)
+```python
+# forecast_api/core/database.py
+# Reuses forecast_storage_mcp/tools/connection.py
+connector = Connector()
+conn = connector.connect(
+    instance_connection_name,
+    "pg8000",
+    user="postgres",
+    password=password,
+    db=database
+)
 ```
 
-## Configuration Points
+## Database Schema
 
-### Environment Variables
+**Table:** `forecasts`
+
+**Key Fields:**
+```sql
+CREATE TABLE forecasts (
+    id SERIAL PRIMARY KEY,
+    city VARCHAR(100) NOT NULL,
+    forecast_text BYTEA NOT NULL,        -- Binary text
+    audio_data BYTEA,                    -- Binary audio
+    forecast_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    text_bytes INTEGER NOT NULL,
+    audio_bytes INTEGER,
+    encoding VARCHAR(20) DEFAULT 'utf-8',
+    language VARCHAR(10) DEFAULT 'en',
+    locale VARCHAR(20) DEFAULT 'en-US',
+    metadata JSONB,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX idx_city_language ON forecasts(city, language);
+CREATE INDEX idx_expires_at ON forecasts(expires_at);
 ```
-MODEL=gemini-2.0-flash-exp
-TTS_MODEL=gemini-2.0-flash-exp
-OPENWEATHER_API_KEY={key}
-OPENWEATHER_BASE_URL=https://api.openweathermap.org/data/2.5/weather
-OUTPUT_DIR=output
-AGENT_ENGINE_ID=projects/{id}/locations/{loc}/reasoningEngines/{id}
+
+**Key Design Decisions:**
+1. **BYTEA for text**: Supports all unicode encodings
+2. **expires_at index**: Fast cleanup queries
+3. **city + language index**: Fast cache lookups
+4. **JSONB metadata**: Flexible extension without schema changes
+
+## Performance Optimizations
+
+### 1. Connection Pooling
+- Reuse HTTP connections to OpenWeather API
+- Reuse Cloud SQL connections (via Cloud SQL Connector)
+
+### 2. Async Cleanup
+- Fire-and-forget cleanup task
+- Doesn't block upload response
+```python
+asyncio.create_task(cleanup_old_forecast_files_async())
 ```
 
-### Tunable Parameters
-- API cache TTL: 900s (15 min) - [`api_call_cache.py:47`](../../weather_agent/api_call_cache.py#L47)
-- Forecast cache TTL: 1800s (30 min) - [`forecast_cache.py:29`](../../weather_agent/forecast_cache.py#L29)
-- Timestamp format: `%Y-%m-%d_%H%M%S` - [`tools.py:13`](../../weather_agent/tools.py#L13)
-- Audio voice: 'Kore' - [`generate_audio.py:47`](../../weather_agent/sub_agents/forecast_speaker/tools/generate_audio.py#L47)
-- Default units: "imperial" - [`get_current_weather.py:48`](../../weather_agent/sub_agents/forecast_writer/tools/get_current_weather.py#L48)
+### 3. Conditional Audio Generation
+- Only generate when user explicitly requests
+- Saves 50-70% of TTS costs
 
-## Testing Patterns
+### 4. Direct SQL for REST API
+- Bypass MCP protocol overhead
+- < 100ms query time vs 200-300ms via MCP
 
-### Current Test Files
-- [`test_api_call_caching.py`](../../test_api_call_caching.py) - Tests Level 1 cache
-- [`test_forecast_caching.py`](../../test_forecast_caching.py) - Tests Level 2 cache
+## Testing Strategy
 
-### Test Strategy
-1. Unit test individual tools
-2. Test cache TTL expiration
-3. Test cache key generation
-4. Test filesystem operations
-5. Integration test: Full agent flow
+### Unit Tests
+- Mock external APIs (OpenWeather, Google TTS)
+- Test each tool independently
+- Validate caching logic
+
+### Integration Tests
+- Test full agent flow with real MCP server
+- Test REST API endpoints with test database
+- Validate encoding/decoding pipelines
+
+### Load Tests
+- 60 requests/minute (API rate limit)
+- Cache hit rate measurement
+- Response time percentiles (p50, p95, p99)
+
+## Deployment Architecture
+
+```
+┌──────────────────────────────────────────┐
+│  Cloud Run Service: forecast-mcp-server │
+│  - MCP SSE server                        │
+│  - Public endpoint                       │
+│  - Auto-scaling (0-10 instances)         │
+└──────────────┬───────────────────────────┘
+               │
+               │ Cloud SQL Connector
+               │
+┌──────────────▼───────────────────────────┐
+│  Cloud SQL Instance: weather-forecasts   │
+│  - PostgreSQL 17                         │
+│  - db-f1-micro (dev) / custom (prod)     │
+│  - Auto-scaling CPU                      │
+└──────────────────────────────────────────┘
+
+┌──────────────────────────────────────────┐
+│  Cloud Run Service: weather-forecast-api │
+│  - FastAPI REST API                      │
+│  - Public endpoint                       │
+│  - Auto-scaling (0-10 instances)         │
+│  - Direct SQL connection                 │
+└──────────────┬───────────────────────────┘
+               │
+               │ Cloud SQL Connector
+               │
+               └──────── (same Cloud SQL) ◀──┘
+```
+
+## Security Considerations
+
+1. **API Keys:** Stored in environment variables, never committed
+2. **Cloud SQL:** Password-protected, Cloud SQL Connector for auth
+3. **CORS:** Configured for REST API, MCP server internal only
+4. **Input Validation:** Pydantic models for API, parameter validation in tools
+5. **Rate Limiting:** Protect against quota exhaustion
